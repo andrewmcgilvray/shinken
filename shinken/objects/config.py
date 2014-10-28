@@ -821,6 +821,7 @@ class Config(Item):
 
     # Removes service exceptions based on host configuration
     def remove_exclusions(self):
+        self.servicedependencies.remove_exclusions(self.hosts)
         return self.services.remove_exclusions(self.hosts)
 
     # Some elements are maybe set as wrong after a is_correct, so clean them

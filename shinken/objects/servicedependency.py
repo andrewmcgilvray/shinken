@@ -69,6 +69,30 @@ class Servicedependencies(Items):
         for id in ids:
             del self[id]
 
+    # Removes service exceptions based on host configuration
+    def remove_exclusions(self, hosts):
+        # Looks for hosts having service_excludes attribute set
+        have_excludes = [h for h in hosts if h.service_excludes]
+        to_remove = []
+
+        for host in have_excludes:
+            for descr in host.service_excludes:
+                # Deletes excluded service instances
+                sdepid = None
+                for servicedep in self:
+                    if servicedep.dependent_service_description == descr and \
+                       servicedep.dependent_host_name == host.host_name:
+                        sdepid = servicedep.id
+                        break
+
+                if sdepid is not None:
+                    to_remove.append(servicedep.id)
+
+        for sdepid in to_remove:
+            del self[sdepid]
+
+        return len(to_remove)
+
     # Add a simple service dep from another (dep -> par)
     def add_service_dependency(self, dep_host_name, dep_service_description, par_host_name, par_service_description):
         # We create a "standard" service_dep
