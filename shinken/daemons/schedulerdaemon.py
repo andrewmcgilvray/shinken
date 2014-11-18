@@ -72,7 +72,7 @@ They connect here and see if they are still OK with our running_id, if not, they
         nb_received = len(results)
         self.app.nb_check_received += nb_received
         if nb_received != 0:
-            logger.debug("Received %d results" % nb_received)
+            logger.debug("Received %d results", nb_received)
         for result in results:
             result.set_type_active()
         with self.app.waiting_results_lock:
@@ -112,7 +112,7 @@ They connect here and get all broks (data for brokers). Data must be ORDERED! (i
     # fill it with all new values
     def fill_initial_broks(self, bname):
         if bname not in self.app.brokers:
-            logger.info("A new broker just connected : %s" % bname)
+            logger.info("A new broker just connected : %s", bname)
             self.app.brokers[bname] = {'broks' : {}, 'has_full_broks' : False}
         e = self.app.brokers[bname]
         if not e['has_full_broks']:
@@ -140,13 +140,15 @@ class IStats(Interface):
         res['nb_zombies']   = len([c for c in sched.checks.values() if c.status == 'zombie'])
         res['nb_notifications'] = len(sched.actions)
         
-        # Get a overview of the latencies with just
-        # a 95 percentile view, but lso min/max values
-        latencies = [s.latency for s in sched.services]
-        lat_avg, lat_min, lat_max = nighty_five_percent(latencies)
-        res['latency'] = (0.0,0.0,0.0)
-        if lat_avg:
-            res['latency'] = (lat_avg, lat_min, lat_max)
+        # Spare scehdulers do not have such properties
+        if hasattr(sched, 'services'):
+            # Get a overview of the latencies with just
+            # a 95 percentile view, but lso min/max values
+            latencies = [s.latency for s in sched.services]
+            lat_avg, lat_min, lat_max = nighty_five_percent(latencies)
+            res['latency'] = (0.0,0.0,0.0)
+            if lat_avg:
+                res['latency'] = (lat_avg, lat_min, lat_max)
         return res
     get_raw_stats.doc = doc
 
@@ -208,7 +210,7 @@ class Shinken(BaseSatellite):
     properties = BaseSatellite.properties.copy()
     properties.update({
         'pidfile':   PathProp(default='schedulerd.pid'),
-        'port':      IntegerProp(default='7768'),
+        'port':      IntegerProp(default=7768),
         'local_log': PathProp(default='schedulerd.log'),
     })
 
@@ -250,7 +252,7 @@ class Shinken(BaseSatellite):
 
     def compensate_system_time_change(self, difference):
         """ Compensate a system time change of difference for all hosts/services/checks/notifs """
-        logger.warning("A system time change of %d has been detected. Compensating..." % difference)
+        logger.warning("A system time change of %d has been detected. Compensating...", difference)
         # We only need to change some value
         self.program_start = max(0, self.program_start + difference)
 
@@ -316,7 +318,7 @@ class Shinken(BaseSatellite):
                     c.t_to_go = new_t
 
     def manage_signal(self, sig, frame):
-        logger.warning("Received a SIGNAL %s" % sig)
+        logger.warning("Received a SIGNAL %s", sig)
         # If we got USR1, just dump memory
         if sig == signal.SIGUSR1:
             self.sched.need_dump_memory = True
@@ -349,13 +351,22 @@ class Shinken(BaseSatellite):
         push_flavor = pk['push_flavor']
         skip_initial_broks = pk['skip_initial_broks']
         accept_passive_unknown_check_results = pk['accept_passive_unknown_check_results']
+        api_key = pk['api_key']
+        secret = pk['secret']
+        http_proxy = pk['http_proxy']
+        statsd_host = pk['statsd_host']
+        statsd_port = pk['statsd_port']
+        statsd_prefix = pk['statsd_prefix']
+        statsd_enabled = pk['statsd_enabled']
         
         # horay, we got a name, we can set it in our stats objects
-        statsmgr.register(instance_name, 'scheduler')
+        statsmgr.register(self.sched, instance_name, 'scheduler', 
+                          api_key=api_key, secret=secret, http_proxy=http_proxy,
+                          statsd_host=statsd_host, statsd_port=statsd_port, statsd_prefix=statsd_prefix, statsd_enabled=statsd_enabled)
         
         t0 = time.time()
         conf = cPickle.loads(conf_raw)
-        logger.debug("Conf received at %d. Unserialized in %d secs" % (t0, time.time() - t0))
+        logger.debug("Conf received at %d. Unserialized in %d secs", t0, time.time() - t0)
         self.new_conf = None
 
         # Tag the conf with our data
@@ -399,12 +410,12 @@ class Shinken(BaseSatellite):
             setattr(self.conf, prop, val)
 
         if self.conf.use_timezone != '':
-            logger.debug("Setting our timezone to %s" % str(self.conf.use_timezone))
+            logger.debug("Setting our timezone to %s", str(self.conf.use_timezone))
             os.environ['TZ'] = self.conf.use_timezone
             time.tzset()
 
         if len(self.modules) != 0:
-            logger.debug("I've got %s modules" % str(self.modules))
+            logger.debug("I've got %s modules", str(self.modules))
 
         # TODO: if scheduler had previous modules instanciated it must clean them!
         self.modules_manager.set_modules(self.modules)
@@ -418,7 +429,7 @@ class Shinken(BaseSatellite):
         # Now create and connect it
         self.ichecks = IChecks(self.sched)
         self.http_daemon.register(self.ichecks)
-        logger.debug("The Scheduler Interface uri is: %s" % self.uri)
+        logger.debug("The Scheduler Interface uri is: %s", self.uri)
         
         # Same for Broks
         if self.ibroks is not None:
@@ -477,6 +488,12 @@ class Shinken(BaseSatellite):
     def main(self):
         try:
             self.load_config_file()
+            # Setting log level
+            logger.setLevel(self.log_level)
+            # Force the debug level if the daemon is said to start with such level
+            if self.debug:
+                logger.setLevel('DEBUG')
+            
             self.look_for_early_exit()
             self.do_daemon_init_and_start()
             self.load_modules_manager()
@@ -488,10 +505,8 @@ class Shinken(BaseSatellite):
 
             self.http_daemon.unregister(self.interface)
             self.uri = self.http_daemon.uri
-            logger.info("[scheduler] General interface is at: %s" % self.uri)
+            logger.info("[scheduler] General interface is at: %s", self.uri)
             self.do_mainloop()
         except Exception, exp:
-            logger.critical("I got an unrecoverable error. I have to exit")
-            logger.critical("You can log a bug ticket at https://github.com/naparuba/shinken/issues/new to get help")
-            logger.critical("Back trace of it: %s" % (traceback.format_exc()))
+            self.print_unrecoverable(traceback.format_exc())
             raise

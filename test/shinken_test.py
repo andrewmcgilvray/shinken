@@ -5,6 +5,8 @@
 #
 
 import sys
+from sys import __stdout__
+
 import time
 import datetime
 import os
@@ -13,6 +15,11 @@ import re
 import random
 import unittest
 import copy
+import locale
+
+
+import unittest
+
 
 # import the shinken library from the parent directory
 import __import_shinken ; del __import_shinken
@@ -41,6 +48,7 @@ from shinken.modulesmanager import ModulesManager
 from shinken.basemodule import BaseModule
 
 from shinken.brok import Brok
+from shinken.misc.common import DICT_MODATTR
 
 from shinken.daemons.schedulerdaemon import Shinken
 from shinken.daemons.brokerdaemon import Broker
@@ -65,6 +73,61 @@ class __DUMMY:
 logger.load_obj(__DUMMY())
 logger.setLevel(ERROR)
 
+#############################################################################
+
+def guess_sys_stdout_encoding():
+    ''' Return the best guessed encoding to be used for printing on sys.stdout. '''
+    return (
+           getattr(sys.stdout, 'encoding', None)
+        or getattr(__stdout__, 'encoding', None)
+        or locale.getpreferredencoding()
+        or sys.getdefaultencoding()
+        or 'ascii'
+    )
+
+
+
+def safe_print(*args, **kw):
+    """" "print" args to sys.stdout,
+    If some of the args aren't unicode then convert them first to unicode,
+        using keyword argument 'in_encoding' if provided (else default to UTF8)
+        and replacing bad encoded bytes.
+    Write to stdout using 'out_encoding' if provided else best guessed encoding,
+        doing xmlcharrefreplace on errors.
+    """
+    in_bytes_encoding = kw.pop('in_encoding', 'UTF-8')
+    out_encoding = kw.pop('out_encoding', guess_sys_stdout_encoding())
+    if kw:
+        raise ValueError('unhandled named/keyword argument(s): %r' % kw)
+    #
+    make_in_data_gen = lambda: ( a if isinstance(a, unicode)
+                                else
+                            unicode(str(a), in_bytes_encoding, 'replace')
+                        for a in args )
+
+    possible_codings = ( out_encoding, )
+    if out_encoding != 'ascii':
+        possible_codings += ( 'ascii', )
+
+    for coding in possible_codings:
+        data = u' '.join(make_in_data_gen()).encode(coding, 'xmlcharrefreplace')
+        try:
+            sys.stdout.write(data)
+            break
+        except UnicodeError as err:
+            # there might still have some problem with the underlying sys.stdout.
+            # it might be a StringIO whose content could be decoded/encoded in this same process
+            # and have encode/decode errors because we could have guessed a bad encoding with it.
+            # in such case fallback on 'ascii'
+            if coding == 'ascii':
+                raise
+            sys.stderr.write('Error on write to sys.stdout with %s encoding: err=%s\nTrying with ascii' % (
+                coding, err))
+    sys.stdout.write(b'\n')
+
+
+
+#############################################################################
 
 # We overwrite the functions time() and sleep()
 # This way we can modify sleep() so that it immediately returns although
@@ -164,29 +227,24 @@ class ShinkenTest(unittest.TestCase, _Unittest2CompatMixIn):
         self.conf.create_objects_for_type(raw_objects, 'module')
         self.conf.early_arbiter_linking()
         self.conf.create_objects(raw_objects)
-        self.conf.old_properties_names_to_new()
         self.conf.instance_id = 0
         self.conf.instance_name = 'test'
         # Hack push_flavor, that is set by the dispatcher
         self.conf.push_flavor = 0
         self.conf.load_triggers()
+        #import pdb;pdb.set_trace()
         self.conf.linkify_templates()
+        #import pdb;pdb.set_trace()
         self.conf.apply_inheritance()
+        #import pdb;pdb.set_trace()
         self.conf.explode()
         #print "Aconf.services has %d elements" % len(self.conf.services)
-        self.conf.create_reversed_list()
-        self.conf.remove_twins()
         self.conf.apply_implicit_inheritance()
         self.conf.fill_default()
         self.conf.remove_templates()
         self.conf.compute_hash()
         #print "conf.services has %d elements" % len(self.conf.services)
-        self.conf.create_reversed_list()
         self.conf.override_properties()
-        self.conf.pythonize()
-        count = self.conf.remove_exclusions()
-        if count > 0:
-            self.conf.create_reversed_list()
         self.conf.linkify()
         self.conf.apply_dependencies()
         self.conf.explode_global_conf()
@@ -196,6 +254,7 @@ class ShinkenTest(unittest.TestCase, _Unittest2CompatMixIn):
         self.conf.is_correct()
         if not self.conf.conf_is_correct:
             print "The conf is not correct, I stop here"
+            self.conf.dump()
             return
         self.conf.clean()
 
@@ -320,13 +379,18 @@ class ShinkenTest(unittest.TestCase, _Unittest2CompatMixIn):
         for brok in sorted(broks.values(), lambda x, y: x.id - y.id):
             if brok.type == 'log':
                 brok.prepare()
-                print "LOG:", brok.data['log']
+                safe_print("LOG: ", brok.data['log'])
+
         print "--- logs >>>----------------------------------"
 
 
     def show_actions(self):
         print "--- actions <<<----------------------------------"
-        for a in sorted(self.sched.actions.values(), lambda x, y: x.id - y.id):
+        if hasattr(self, "sched"):
+            actions = self.sched.actions
+        else:
+            actions = self.actions
+        for a in sorted(actions.values(), lambda x, y: x.id - y.id):
             if a.is_a == 'notification':
                 if a.ref.my_type == "host":
                     ref = "host: %s" % a.ref.get_name()
@@ -349,24 +413,39 @@ class ShinkenTest(unittest.TestCase, _Unittest2CompatMixIn):
 
 
     def count_logs(self):
-        return len([b for b in self.sched.broks.values() if b.type == 'log'])
+        if hasattr(self, "sched"):
+            broks = self.sched.broks
+        else:
+            broks = self.broks
+        return len([b for b in broks.values() if b.type == 'log'])
 
 
     def count_actions(self):
-        return len(self.sched.actions.values())
+        if hasattr(self, "sched"):
+            actions = self.sched.actions
+        else:
+            actions = self.actions
+        return len(actions.values())
 
 
     def clear_logs(self):
+        if hasattr(self, "sched"):
+            broks = self.sched.broks
+        else:
+            broks = self.broks
         id_to_del = []
-        for b in self.sched.broks.values():
+        for b in broks.values():
             if b.type == 'log':
                 id_to_del.append(b.id)
         for id in id_to_del:
-            del self.sched.broks[id]
+            del broks[id]
 
 
     def clear_actions(self):
-        self.sched.actions = {}
+        if hasattr(self, "sched"):
+            self.sched.actions = {}
+        else:
+            self.actions = {}
 
 
     def log_match(self, index, pattern):

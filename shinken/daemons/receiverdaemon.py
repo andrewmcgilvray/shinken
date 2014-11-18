@@ -41,6 +41,7 @@ from shinken.log import logger
 from shinken.external_command import ExternalCommand, ExternalCommandManager
 from shinken.http_client import HTTPExceptions
 from shinken.daemon import Interface
+from shinken.stats import statsmgr
 
 class IStats(Interface):
     """ 
@@ -68,7 +69,8 @@ They connect here and get all broks (data for brokers). Data must be ORDERED! (i
 
 # Our main APP class
 class Receiver(Satellite):
-
+    my_type = 'receiver'
+    
     properties = Satellite.properties.copy()
     properties.update({
         'pidfile':   PathProp(default='receiverd.pid'),
@@ -122,7 +124,7 @@ class Receiver(Satellite):
             self.broks[elt.id] = elt
             return
         elif cls_type == 'externalcommand':
-            logger.debug("Enqueuing an external command: %s" % str(ExternalCommand.__dict__))
+            logger.debug("Enqueuing an external command: %s", str(ExternalCommand.__dict__))
             self.unprocessed_external_commands.append(elt)
 
 
@@ -147,9 +149,9 @@ class Receiver(Satellite):
             try:
                 mod.manage_brok(b)
             except Exception, exp:
-                logger.warning("The mod %s raise an exception: %s, I kill it" % (mod.get_name(), str(exp)))
-                logger.warning("Exception type: %s" % type(exp))
-                logger.warning("Back trace of this kill: %s" % (traceback.format_exc()))
+                logger.warning("The mod %s raise an exception: %s, I kill it", mod.get_name(), str(exp))
+                logger.warning("Exception type: %s", type(exp))
+                logger.warning("Back trace of this kill: %s", traceback.format_exc())
                 to_del.append(mod)
         # Now remove mod that raise an exception
         self.modules_manager.clear_instances(to_del)
@@ -188,6 +190,17 @@ class Receiver(Satellite):
         else:
             name = 'Unnamed receiver'
         self.name = name
+        self.api_key = conf['global']['api_key']
+        self.secret = conf['global']['secret']
+        self.http_proxy = conf['global']['http_proxy']
+        self.statsd_host = conf['global']['statsd_host']
+        self.statsd_port = conf['global']['statsd_port']
+        self.statsd_prefix = conf['global']['statsd_prefix']
+        self.statsd_enabled = conf['global']['statsd_enabled']
+        
+        statsmgr.register(self, self.name, 'receiver', 
+                          api_key=self.api_key, secret=self.secret, http_proxy=self.http_proxy,
+                          statsd_host=self.statsd_host, statsd_port=self.statsd_port, statsd_prefix=self.statsd_prefix, statsd_enabled=self.statsd_enabled)
         logger.load_obj(self, name)
         self.direct_routing = conf['global']['direct_routing']
         self.accept_passive_unknown_check_results = conf['global']['accept_passive_unknown_check_results']
@@ -210,7 +223,7 @@ class Receiver(Satellite):
                     already_got = True
 
             if already_got:
-                logger.info("[%s] We already got the conf %d (%s)" % (self.name, sched_id, conf['schedulers'][sched_id]['name']))
+                logger.info("[%s] We already got the conf %d (%s)", self.name, sched_id, conf['schedulers'][sched_id]['name'])
                 wait_homerun = self.schedulers[sched_id]['wait_homerun']
                 actions = self.schedulers[sched_id]['actions']
                 external_commands = self.schedulers[sched_id]['external_commands']
@@ -240,7 +253,9 @@ class Receiver(Satellite):
                 self.schedulers[sched_id]['con'] = None
             self.schedulers[sched_id]['running_id'] = 0
             self.schedulers[sched_id]['active'] = s['active']
-
+            self.schedulers[sched_id]['timeout'] = s['timeout']
+            self.schedulers[sched_id]['data_timeout'] = s['data_timeout']
+            
             # Do not connect if we are a passive satellite
             if self.direct_routing and not already_got:
                 # And then we connect to it :)
@@ -248,19 +263,20 @@ class Receiver(Satellite):
 
 
 
-        logger.debug("[%s] Sending us configuration %s" % (self.name, conf))
+        logger.debug("[%s] Sending us configuration %s", self.name, conf)
 
         if not self.have_modules:
             self.modules = mods = conf['global']['modules']
             self.have_modules = True
-            logger.info("We received modules %s " % mods)
+            logger.info("We received modules %s ", mods)
 
         # Set our giving timezone from arbiter
         use_timezone = conf['global']['use_timezone']
         if use_timezone != 'NOTSET':
-            logger.info("Setting our timezone to %s" % use_timezone)
+            logger.info("Setting our timezone to %s", use_timezone)
             os.environ['TZ'] = use_timezone
             time.tzset()
+
 
     # Take all external commands, make packs and send them to
     # the schedulers
@@ -288,26 +304,26 @@ class Receiver(Satellite):
             con = sched.get('con', None)
             sent = False
             if not con:
-                logger.warning("The scheduler is not connected" % sched)
+                logger.warning("The scheduler is not connected %s", sched)
                 self.pynag_con_init(sched_id)
                 con = sched.get('con', None)
             
             # If there are commands and the scheduler is alive
             if len(cmds) > 0 and con:
-                logger.debug("Sending %d commands to scheduler %s" % (len(cmds), sched))
+                logger.debug("Sending %d commands to scheduler %s", len(cmds), sched)
                 try:
                     #con.run_external_commands(cmds)
                     con.post('run_external_commands', {'cmds':cmds})
                     sent = True
                 # Not connected or sched is gone
                 except (HTTPExceptions, KeyError), exp:
-                    logger.debug('manage_returns exception:: %s,%s ' % (type(exp), str(exp)))
+                    logger.debug('manage_returns exception:: %s,%s ', type(exp), str(exp))
                     self.pynag_con_init(sched_id)
                     return
                 except AttributeError, exp:  # the scheduler must  not be initialized
-                    logger.debug('manage_returns exception:: %s,%s ' % (type(exp), str(exp)))
+                    logger.debug('manage_returns exception:: %s,%s ', type(exp), str(exp))
                 except Exception, exp:
-                    logger.error("A satellite raised an unknown exception: %s (%s)" % (exp, type(exp)))
+                    logger.error("A satellite raised an unknown exception: %s (%s)", exp, type(exp))
                     raise
 
             # Wether we sent the commands or not, clean the scheduler list
@@ -317,6 +333,7 @@ class Receiver(Satellite):
             if not sent:
                 for extcmd in extcmds:
                     self.external_commands.append(extcmd)
+
 
     def do_loop_turn(self):
         sys.stdout.write(".")
@@ -349,20 +366,27 @@ class Receiver(Satellite):
     def main(self):
         try:
             self.load_config_file()
+            
+            # Setting log level
+            logger.setLevel(self.log_level)
+            # Force the debug level if the daemon is said to start with such level
+            if self.debug:
+                logger.setLevel('DEBUG')
+            
             # Look if we are enabled or not. If ok, start the daemon mode
             self.look_for_early_exit()
 
             for line in self.get_header():
                 logger.info(line)
 
-            logger.info("[Receiver] Using working directory: %s" % os.path.abspath(self.workdir))
+            logger.info("[Receiver] Using working directory: %s", os.path.abspath(self.workdir))
 
             self.do_daemon_init_and_start()
 
             self.load_modules_manager()
 
             self.uri2 = self.http_daemon.register(self.interface)#, "ForArbiter")
-            logger.debug("The Arbiter uri it at %s" % self.uri2)
+            logger.debug("The Arbiter uri it at %s", self.uri2)
 
             self.uri3 = self.http_daemon.register(self.istats)
 
@@ -387,12 +411,24 @@ class Receiver(Satellite):
             # Do the modules part, we have our modules in self.modules
             # REF: doc/receiver-modules.png (1)
 
-
             # Now the main loop
             self.do_mainloop()
 
         except Exception, exp:
-            logger.critical("I got an unrecoverable error. I have to exit")
-            logger.critical("You can log a bug ticket at https://github.com/naparuba/shinken/issues/new to get help")
-            logger.critical("Back trace of it: %s" % (traceback.format_exc()))
+            self.print_unrecoverable(traceback.format_exc())
             raise
+
+
+    # stats threads is asking us a main structure for stats
+    def get_stats_struct(self):
+        now = int(time.time())
+        # call the daemon one
+        res = super(Receiver, self).get_stats_struct()
+        res.update( {'name':self.name, 'type':'receiver',
+                     'direct_routing':self.direct_routing} )
+        metrics = res['metrics']      
+        # metrics specific
+        metrics.append( 'receiver.%s.external-commands.queue %d %d' % (self.name, len(self.external_commands), now) )
+        
+        return res
+    

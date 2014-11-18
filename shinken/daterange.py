@@ -60,7 +60,7 @@ def find_day_by_weekday_offset(year, month, weekday, offset):
             if nb_found == offset:
                 return cal[i][weekday_id]
         return None
-    except:
+    except Exception:
         return None
 
 
@@ -148,7 +148,7 @@ class Daterange:
     def get_month_id(cls, month):
         try:
             return Daterange.months[month]
-        except:
+        except Exception:
             return None
     get_month_id = classmethod(get_month_id)
 
@@ -164,7 +164,7 @@ class Daterange:
     def get_weekday_id(cls, weekday):
         try:
             return Daterange.weekdays[weekday]
-        except:
+        except Exception:
             return None
     get_weekday_id = classmethod(get_weekday_id)
 
@@ -415,7 +415,7 @@ class StandardDaterange(Daterange):
     def is_correct(self):
         b = self.day in Daterange.weekdays
         if not b:
-            logger.error("Error: %s is not a valid day" % self.day)
+            logger.error("Error: %s is not a valid day", self.day)
         # Check also if Daterange is correct.
         b &= Daterange.is_correct(self)
         return b
@@ -442,11 +442,11 @@ class MonthWeekDayDaterange(Daterange):
         b = True
         b &= self.swday in Daterange.weekdays
         if not b:
-            logger.error("Error: %s is not a valid day" % self.swday)
+            logger.error("Error: %s is not a valid day", self.swday)
 
         b &= self.ewday in Daterange.weekdays
         if not b:
-            logger.error("Error: %s is not a valid day" % self.ewday)
+            logger.error("Error: %s is not a valid day", self.ewday)
 
         return b
 

@@ -107,13 +107,13 @@ class Timeperiod(Item):
     properties.update({
         'timeperiod_name':  StringProp(fill_brok=['full_status']),
         'alias':            StringProp(default='', fill_brok=['full_status']),
-        'use':              StringProp(default=''),
-        'register':         IntegerProp(default='1'),
+        'use':              StringProp(default=None),
+        'register':         IntegerProp(default=1),
 
         # These are needed if a broker module calls methods on timeperiod objects
         'dateranges':       ListProp(fill_brok=['full_status'], default=[]),
         'exclude':          ListProp(fill_brok=['full_status'], default=[]),
-        'is_active':        BoolProp(default='0')
+        'is_active':        BoolProp(default=False)
     })
     running_properties = Item.running_properties.copy()
 
@@ -136,7 +136,9 @@ class Timeperiod(Item):
                     params[key] = ''
 
             if key in ['name', 'alias', 'timeperiod_name', 'exclude', 'use', 'register', 'imported_from', 'is_active', 'dateranges']:
-                setattr(self, key, params[key])
+                setattr(self, key, self.properties[key].pythonize(params[key]))
+            elif key.startswith('_'):
+                self.customs[key.upper()] = params[key]            
             else:
                 self.unresolved.append(key + ' ' + params[key])
 
@@ -431,12 +433,12 @@ class Timeperiod(Item):
         for dr in self.dateranges:
             d = dr.is_correct()
             if not d:
-                logger.error("[timeperiod::%s] invalid daterange " % (self.get_name()))
+                logger.error("[timeperiod::%s] invalid daterange ", self.get_name())
             b &= d
 
         # Warn about non correct entries
         for e in self.invalid_entries:
-            logger.warning("[timeperiod::%s] invalid entry '%s'" % (self.get_name(), e))
+            logger.warning("[timeperiod::%s] invalid entry '%s'", self.get_name(), e)
         return b
 
     def __str__(self):
@@ -629,7 +631,7 @@ class Timeperiod(Item):
                 day = t0
                 dateranges.append(StandardDaterange(day, other))
                 return
-        logger.info("[timeentry::%s] no match for %s" % (self.get_name(), entry))
+        logger.info("[timeentry::%s] no match for %s", self.get_name(), entry)
         self.invalid_entries.append(entry)
 
     def apply_inheritance(self):
@@ -645,21 +647,21 @@ class Timeperiod(Item):
     # Will make tp in exclude with id of the timeperiods
     def linkify(self, timeperiods):
         new_exclude = []
-        if self.has('exclude') and self.exclude != '':
-            logger.debug("[timeentry::%s] have excluded %s" % (self.get_name(), self.exclude))
-            excluded_tps = self.exclude.split(',')
+        if self.has('exclude') and self.exclude != []:
+            logger.debug("[timeentry::%s] have excluded %s", self.get_name(), self.exclude)
+            excluded_tps = self.exclude
             #print "I will exclude from:", excluded_tps
             for tp_name in excluded_tps:
                 tp = timeperiods.find_by_name(tp_name.strip())
                 if tp is not None:
                     new_exclude.append(tp)
                 else:
-                    logger.error("[timeentry::%s] unknown %s timeperiod" % (self.get_name(), tp_name))
+                    logger.error("[timeentry::%s] unknown %s timeperiod", self.get_name(), tp_name)
         self.exclude = new_exclude
 
     def check_exclude_rec(self):
         if self.rec_tag:
-            logger.error("[timeentry::%s] is in a loop in exclude parameter" % self.get_name())
+            logger.error("[timeentry::%s] is in a loop in exclude parameter", self.get_name())
             return False
         self.rec_tag = True
         for tp in self.exclude:
@@ -707,7 +709,7 @@ class Timeperiods(Items):
         # The only interesting property to inherit is exclude
         self.apply_partial_inheritance('exclude')
         for i in self:
-            i.get_customs_properties_by_inheritance(self)
+            i.get_customs_properties_by_inheritance()
 
         # And now apply inheritance for unresolved properties
         # like the dateranges in fact
